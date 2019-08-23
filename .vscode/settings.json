@@ -1,9 +1,0 @@
-{
-    "python.pythonPath": "/Users/shenli/envs/graphene-asgi/bin/python",
-    "python.formatting.provider": "black",
-    "python.jediMemoryLimit": 1,
-    "python.jediPath": "/Users/shenli/Envs/graphene-asgi/lib/python3.7/site-packages",
-    "python.linting.enabled": true,
-    "python.linting.pylintEnabled": false,
-    "python.linting.flake8Enabled": true
-}
