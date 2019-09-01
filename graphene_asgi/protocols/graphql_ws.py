@@ -43,7 +43,7 @@ class GraphqlWSHandler(ProtocolBase):
             variable_values=payload["variables"],
         )
         if isinstance(res, AsyncIterator):
-            self.subscriptions[id] = asyncio.create_task(self._consume_stream(res, id))
+            self.subscriptions[id] = asyncio.ensure_future(self._consume_stream(res, id))
         elif isinstance(res, ExecutionResult):
             if res.errors:
                 await self.send_graphql_ws_message(
