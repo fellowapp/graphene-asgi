@@ -1,13 +1,17 @@
 import asyncio
+
 import graphene
 import pytest
+
 from graphene_asgi.application import Application
 
 
 class Query(graphene.ObjectType):
 
     a_num = graphene.Int()
-    a_num_with_args = graphene.Field(graphene.Int, required=True, num=graphene.Int(required=True))
+    a_num_with_args = graphene.Field(
+        graphene.Int, required=True, num=graphene.Int(required=True)
+    )
     get_context = graphene.JSONString()
 
     def resolve_a_num(self, info):
@@ -20,21 +24,18 @@ class Query(graphene.ObjectType):
         return info.context
 
 
-async def sub_count_seconds(root, info, up_to):
-    for i in range(up_to):
-        yield i
-        await asyncio.sleep(1.0)
-    yield up_to
-
-
 class Subscription(graphene.ObjectType):
-    count_seconds = graphene.Float(up_to=graphene.Float())
+    count = graphene.Float(up_to=graphene.Float())
 
-    async def resolve_count_seconds(root, info, up_to):
-        for i in range(up_to):
-            yield i
-            await asyncio.sleep(1.0)
-        yield up_to
+    async def resolve_count(self, info, up_to):
+        return self
+
+    async def subscribe_count(self, info, up_to):
+        for i in range(int(up_to)):
+            yield float(i)
+            await asyncio.sleep(0.01)
+        else:
+            yield float(up_to)
 
 
 schema = graphene.Schema(query=Query, subscription=Subscription)
@@ -43,6 +44,7 @@ schema = graphene.Schema(query=Query, subscription=Subscription)
 @pytest.fixture
 def default_schema():
     return schema
+
 
 @pytest.fixture
 def default_application(default_schema):

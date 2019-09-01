@@ -20,7 +20,7 @@ class WebsocketHandler(ProtocolBase):
             variable_values=variables,
             operation_name=operation_name,
         )
-        reply = json.dumps({**res._asdict(), "id": params.pop("id", None)})
+        reply = json.dumps({**self.app.format_res(res), "id": params.pop("id", None)})
         await self.send({"type": "websocket.send", "text": reply})
 
     async def run(self):

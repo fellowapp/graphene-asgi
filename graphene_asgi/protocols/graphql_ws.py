@@ -1,4 +1,8 @@
+import asyncio
 import json
+from typing import AsyncIterator
+
+from graphql.execution.execute import ExecutionResult
 
 from .base import ProtocolBase
 
@@ -15,46 +19,56 @@ GQL_STOP = "stop"
 
 
 class GraphqlWSHandler(ProtocolBase):
-
     def __init__(self, scope, receive, send, app):
-        self.futures = {}
-        return super().__init__(scope, receive, send, app)
+        self.subscriptions = {}
+        super().__init__(scope, receive, send, app)
 
     async def handle_message(self, text=None):
         message = json.loads(text)
         type = message["type"]
         if type == GQL_CONNECTION_INIT:
-            await self.on_connection_init(message.get("payload", {}))
+            await self.on_connect(message.get("payload", {}))
         if type == GQL_START:
-            await self.on_start(message["id"], message["payload"])
+            await self.on_operation(message["id"], message["payload"])
+        if type == GQL_STOP:
+            await self.on_stop(message["id"])
+        if type == GQL_CONNECTION_TERMINATE:
+            await self.send({"type": "websocket.close"})
 
-    async def on_start(self, id: str, payload: dict):
+    async def on_operation(self, id: str, payload: dict):
         context = await self.app.get_context(self.scope, payload)
         res = await self.app.execute(
-            source=payload['query'],
+            source=payload["query"],
             context_value=context,
-            variable_values=payload['variables'],
+            variable_values=payload["variables"],
         )
-        print(res)
-        # import ipdb; ipdb.set_trace()
-        # res.subscribe(self.on_response, partialmethod(self.on_response, id))
+        if isinstance(res, AsyncIterator):
+            self.subscriptions[id] = asyncio.create_task(self._consume_stream(res, id))
+        elif isinstance(res, ExecutionResult):
+            if res.errors:
+                await self.send_graphql_ws_message(
+                    GQL_ERROR,
+                    {"payload": [{"message": e.message} for e in res.errors], "id": id},
+                )
+            else:
+                await self.send_graphql_ws_message(
+                    GQL_DATA, {"payload": self.app.format_res(res), "id": id}
+                )
 
-    async def on_response(self, id: str, resp):
-        print(id, resp)
-
-    async def on_connection_init(self, payload: dict):
+    async def on_connect(self, payload: dict):
         return await self.send_graphql_ws_message(GQL_CONNECTION_ACK)
+
+    async def on_stop(self, id):
+        fut = self.subscriptions.pop(id, None)
+        if fut:
+            fut.cancel()
 
     async def send_graphql_ws_message(self, type, content=None):
         if content is None:
             content = {}
-        return await self.send({
-            "type": "websocket.send",
-            "text": json.dumps({
-                "type": type,
-                **content,
-            })
-        })
+        return await self.send(
+            {"type": "websocket.send", "text": json.dumps({"type": type, **content})}
+        )
 
     async def run(self):
         assert "graphql-ws" in self.scope["subprotocols"]
@@ -68,6 +82,19 @@ class GraphqlWSHandler(ProtocolBase):
             message = await self.receive()
             type = message["type"]
             if type == "websocket.disconnect":
+                for fut in self.subscriptions.values():
+                    fut.cancel()
                 break
             if type == "websocket.receive":
                 await self.handle_message(text=message.get("text"))
+
+    async def _consume_stream(self, stream, id):
+        async for item in stream:
+            try:
+                await self.send_graphql_ws_message(
+                    GQL_DATA, {"payload": self.app.format_res(item), "id": id}
+                )
+            except asyncio.CancelledError:
+                break
+        else:
+            await self.send_graphql_ws_message(GQL_COMPLETE, {"id": id})

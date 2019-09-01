@@ -17,6 +17,12 @@ def test_schema(default_schema):
     assert res.errors is None
 
 
+def test_http_get(default_application):
+    client = TestClient(default_application)
+    resp = client.get("/")
+    assert resp.status_code == 200
+
+
 def test_http_asig_json_body(default_application):
     request_body_data = {
         "query": """
@@ -37,4 +43,4 @@ def test_http_asig_json_body(default_application):
     assert res["data"]["aNum"] == 1
     assert res["data"]["aNumWithArgs"] == 99
     context = json.loads(res["data"]["getContext"])
-    assert context['headers']["foo"] == "bar"
+    assert context["headers"]["foo"] == "bar"

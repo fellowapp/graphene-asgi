@@ -22,7 +22,7 @@ class HTTPHandler(ProtocolBase):
             variable_values=variables,
             operation_name=operation_name,
         )
-        resp = json.dumps(res._asdict()).encode()
+        resp = json.dumps(self.app.format_res(res)).encode()
         headers = [
             (b"content-type", b"application/json"),
             (b"content-length", str(len(resp)).encode()),

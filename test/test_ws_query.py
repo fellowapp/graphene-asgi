@@ -27,7 +27,3 @@ def test_query_through_ws(default_application):
         assert res["data"]["aNum"] == 1
         assert res["data"]["aNumWithArgs"] == 100
         assert json.loads(res["data"]["getContext"])["headers"]["foo"] == "bar"
-
-
-def test_subscription_throuhg_ws(default_application):
-    request_body_data = {}

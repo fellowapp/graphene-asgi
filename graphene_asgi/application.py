@@ -1,14 +1,25 @@
 import json
-from typing import Any, Awaitable, Callable, Optional, Tuple, Union
+from typing import Any, Awaitable, Callable, Optional, Tuple
 
 from graphene import Schema
+from graphql.execution.execute import ExecutionResult
+from graphql.language import parse
+from graphql.language.ast import OperationDefinitionNode, OperationType
 
-from .protocols import HTTPHandler, GraphqlWSHandler, WebsocketHandler
+from .protocols import GraphqlWSHandler, HTTPHandler, WebsocketHandler
 
 
 class Application:
     def __init__(self, schema: Schema):
         self.schema = schema
+        # hack to attach subscribe_{field_name} methods to fields in the schema
+        for name in self.schema.subscription._meta.fields.keys():
+            field = schema.graphql_schema.subscription_type.fields[
+                schema.graphql_schema.get_name(name)
+            ]
+            field.subscribe = getattr(
+                self.schema.subscription, "{}_{}".format("subscribe", name)
+            )
 
     async def get_context(self, scope, message):
         return {
@@ -26,15 +37,45 @@ class Application:
         return (
             data.pop("query"),
             data.pop("variables", {}),
-            data.pop("operation_name", None),
+            data.pop("operationName", None),
             data,
         )
 
+    def format_res(self, res: ExecutionResult):
+        data = dict(res._asdict())
+        if data["errors"]:
+            data["errors"] = [e.formatted for e in data["errors"]]
+        else:
+            del data["errors"]
+        return data
+
     async def execute(self, **kwargs):
         default_kwargs = {}
-        return await self.schema.execute_async(
-            **default_kwargs, **kwargs,
-        )
+        assert "source" in kwargs
+        document = parse(kwargs["source"])
+        operation_defs = {
+            d.name.value if d.name else None: d
+            for d in document.definitions
+            if isinstance(d, OperationDefinitionNode)
+        }
+        if len(operation_defs) == 1:
+            op = next(o for o in operation_defs.values())
+        # let it fail. Don't want to return error myself
+        elif None in operation_defs:
+            return await self.schema.execute_async(**default_kwargs, **kwargs)
+        else:
+            if (
+                "operation_name" not in kwargs
+                or kwargs["operation_name"] not in operation_defs
+            ):
+                # let it fail. Don't want to return error myself
+                return await self.schema.execute_async(**default_kwargs, **kwargs)
+            op = operation_defs[kwargs["operation_name"]]
+        if op.operation == OperationType.SUBSCRIPTION:
+            kwargs["document"] = document
+            kwargs.pop("source")
+            return await self.schema.subscribe(**default_kwargs, **kwargs)
+        return await self.schema.execute_async(**default_kwargs, **kwargs)
 
     async def check_access(self, scope):
         return True
@@ -71,7 +112,7 @@ class Application:
             return await WebsocketHandler(scope, receive, send, app=self).run()
 
 
-GRAPHIQL = GRAPHIQL = """
+GRAPHIQL = """
 <!--
  *  Copyright (c) Facebook, Inc.
  *  All rights reserved.
@@ -93,13 +134,6 @@ GRAPHIQL = GRAPHIQL = """
         height: 100vh;
       }
     </style>
-    <!--
-      This GraphiQL example depends on Promise and fetch, which are available in
-      modern browsers, but can be "polyfilled" for older browsers.
-      GraphiQL itself depends on React DOM.
-      If you do not want to rely on a CDN, you can host these files locally or
-      include them directly in your favored resource bunder.
-    -->
     <link href="//unpkg.com/graphiql@0.12.0/graphiql.css" rel="stylesheet"/>
     <script src="//unpkg.com/whatwg-fetch@2.0.3/fetch.js"></script>
     <script src="//unpkg.com/react@16.2.0/umd/react.production.min.js"></script>
@@ -111,36 +145,7 @@ GRAPHIQL = GRAPHIQL = """
   <body>
     <div id="graphiql">Loading...</div>
     <script>
-      /**
-       * This GraphiQL example illustrates how to use some of GraphiQL's props
-       * in order to enable reading and updating the URL parameters, making
-       * link sharing of queries a little bit easier.
-       *
-       * This is only one example of this kind of feature, GraphiQL exposes
-       * various React params to enable interesting integrations.
-       */
-      // Parse the search string to get url parameters.
-      var search = window.location.search;
       var parameters = {};
-      search.substr(1).split('&').forEach(function (entry) {
-        var eq = entry.indexOf('=');
-        if (eq >= 0) {
-          parameters[decodeURIComponent(entry.slice(0, eq))] =
-            decodeURIComponent(entry.slice(eq + 1));
-        }
-      });
-      // if variables was provided, try to format it.
-      if (parameters.variables) {
-        try {
-          parameters.variables =
-            JSON.stringify(JSON.parse(parameters.variables), null, 2);
-        } catch (e) {
-          // Do nothing, we want to display the invalid JSON as a string, rather
-          // than present an error.
-        }
-      }
-      // When the query and variables string is edited, update the URL bar so
-      // that it can be easily shared
       function onEditQuery(newQuery) {
         parameters.query = newQuery;
       }
@@ -150,9 +155,6 @@ GRAPHIQL = GRAPHIQL = """
       function onEditOperationName(newOperationName) {
         parameters.operationName = newOperationName;
       }
-      // Defines a GraphQL fetcher using the fetch API. You're not required to
-      // use fetch, and could instead implement graphQLFetcher however you like,
-      // as long as it returns a Promise or Observable.
       function graphQLFetcher(graphQLParams) {
         return fetch(window.location.pathname, {
           method: 'post',
@@ -161,7 +163,6 @@ GRAPHIQL = GRAPHIQL = """
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(graphQLParams),
-          credentials: 'include',
         }).then(function (response) {
           return response.text();
         }).then(function (responseBody) {
@@ -172,13 +173,8 @@ GRAPHIQL = GRAPHIQL = """
           }
         });
       }
-      // subscription fetcher
       var subscriptionsClient = new window.SubscriptionsTransportWs.SubscriptionClient("ws://" + window.location.host + window.location.pathname, { reconnect: true });
       var subscriptionsFetcher = GraphiQLSubscriptionsFetcher.graphQLFetcher(subscriptionsClient, graphQLFetcher);
-      // Render <GraphiQL /> into the body.
-      // See the README in the top level of this module to learn more about
-      // how you can customize GraphiQL by providing different values or
-      // additional child elements.
       ReactDOM.render(
         React.createElement(GraphiQL, {
           fetcher: subscriptionsFetcher,
@@ -194,4 +190,4 @@ GRAPHIQL = GRAPHIQL = """
     </script>
   </body>
 </html>
-"""
+"""  # noqa
