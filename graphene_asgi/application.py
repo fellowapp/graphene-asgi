@@ -2,6 +2,8 @@ import json
 from typing import Any, Awaitable, Callable, Optional, Tuple
 
 from graphene import Schema
+from graphene.types.schema import normalize_execute_kwargs
+from graphql import subscribe
 from graphql.execution.execute import ExecutionResult
 from graphql.language import parse
 from graphql.language.ast import OperationDefinitionNode, OperationType
@@ -74,7 +76,12 @@ class Application:
         if op.operation == OperationType.SUBSCRIPTION:
             kwargs["document"] = document
             kwargs.pop("source")
-            return await self.schema.subscribe(**default_kwargs, **kwargs)
+            # graphene does not support subscribe yet
+            return await subscribe(
+                self.schema.graphql_schema,
+                **normalize_execute_kwargs({**default_kwargs, **kwargs})
+            )
+            # return await self.schema.subscribe(**default_kwargs, **kwargs)
         return await self.schema.execute_async(**default_kwargs, **kwargs)
 
     async def check_access(self, scope):
