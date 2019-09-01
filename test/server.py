@@ -1,4 +1,4 @@
-from graphene_asgi.application import Application
+from graphene_asgi import Application
 
 from .conftest import schema
 

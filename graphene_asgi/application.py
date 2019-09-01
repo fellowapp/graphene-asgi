@@ -8,20 +8,22 @@ from graphql.execution.execute import ExecutionResult
 from graphql.language import parse
 from graphql.language.ast import OperationDefinitionNode, OperationType
 
-from .protocols import GraphqlWSHandler, HTTPHandler, WebsocketHandler
+from .protocols import GraphqlWSHandler, HTTPPostHandler, WebsocketHandler
 
 
 class Application:
-    def __init__(self, schema: Schema):
+    def __init__(self, schema: Schema, grapiql: bool = True):
         self.schema = schema
+        self.graphiql = grapiql
         # hack to attach subscribe_{field_name} methods to fields in the schema
         for name in self.schema.subscription._meta.fields.keys():
             field = schema.graphql_schema.subscription_type.fields[
                 schema.graphql_schema.get_name(name)
             ]
-            field.subscribe = getattr(
-                self.schema.subscription, "{}_{}".format("subscribe", name)
-            )
+            if not getattr(field, "subscribe", None):
+                field.subscribe = getattr(
+                    self.schema.subscription, "{}_{}".format("subscribe", name)
+                )
 
     async def get_context(self, scope, message):
         return {
@@ -95,6 +97,12 @@ class Application:
     ):
         if scope["type"] == "http":
             if scope["method"].lower() == "get":
+                if not self.graphiql:
+                    await send({"type": "http.response.start", "status": 405})
+                    await send(
+                        {"type": "http.response.body", "body": b"", "more_body": False}
+                    )
+                    return
                 resp_body = GRAPHIQL.encode()
                 await send(
                     {
@@ -112,7 +120,7 @@ class Application:
                 )
                 return
             else:
-                return await HTTPHandler(scope, receive, send, app=self).run()
+                return await HTTPPostHandler(scope, receive, send, app=self).run()
         if scope["type"] == "websocket":
             if "graphql-ws" in scope["subprotocols"]:
                 return await GraphqlWSHandler(scope, receive, send, app=self).run()

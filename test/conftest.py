@@ -3,7 +3,7 @@ import asyncio
 import graphene
 import pytest
 
-from graphene_asgi.application import Application
+from graphene_asgi import Application
 
 
 class Query(graphene.ObjectType):

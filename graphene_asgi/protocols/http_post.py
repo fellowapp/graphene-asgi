@@ -3,7 +3,7 @@ import json
 from .base import ProtocolBase
 
 
-class HTTPHandler(ProtocolBase):
+class HTTPPostHandler(ProtocolBase):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.http_body = b""
